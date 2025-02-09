@@ -21,6 +21,9 @@ A Go microservice that efficiently processes and stores port data from a JSON fi
 ### Local Execution
 
 To run the service use `go run cmd/main.go [flags]`
+Or in Docker `docker build -t ports-processor .` 
+`docker run  ports-processor `
+
 Available flags:
 - `-storage`: Storage engine (default: "sqlite")
 - `-file`: Path to ports JSON file (default: "../ports.json")

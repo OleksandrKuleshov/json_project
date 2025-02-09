@@ -17,7 +17,7 @@ import (
 
 var (
 	storage        = flag.String("storage", "sqlite", "storage engine to use")
-	filePath       = flag.String("file", "../ports.json", "path to ports JSON file")
+	filePath       = flag.String("file", "./ports.json", "path to ports JSON file")
 	batchSize      = flag.Int("batch", 100, "batch size for ports to process")
 	chanBufferSize = flag.Int("buffer", 10, "size of the ports channel buffer")
 )
