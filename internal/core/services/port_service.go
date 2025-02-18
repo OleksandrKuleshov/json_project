@@ -3,12 +3,12 @@ package services
 import (
 	"context"
 	"fmt"
-	"home-task/internal/core/domain"
-	"home-task/internal/core/ports"
-	"log"
-	"os"
 	"sync"
 	"time"
+
+	"github.com/OleksandrKuleshov/home-task/internal/adapters/file"
+	"github.com/OleksandrKuleshov/home-task/internal/adapters/repository"
+	"github.com/OleksandrKuleshov/home-task/internal/core/domain"
 )
 
 type contextKey string
@@ -19,25 +19,40 @@ const (
 	ChanBufferSize contextKey = "buffer"
 )
 
-type PortsService struct {
-	repo       ports.PortRepository
-	jsonReader ports.JSONReader
-	logger     *log.Logger
+type Config struct {
+	FilePath       string
+	BatchSize      int
+	ChanBufferSize int
 }
 
-var _ ports.PortService = (*PortsService)(nil) // Compile-time assertion
+type Logger interface {
+	Printf(format string, v ...interface{})
+	Println(v ...interface{})
+}
 
-func NewPortsService(repo ports.PortRepository, jsonReader ports.JSONReader) *PortsService {
+type PortsService struct {
+	repo       repository.PortRepository
+	jsonReader file.JSONReader
+	logger     Logger
+}
+
+type PortService interface {
+	ReadAndStorePorts(ctx context.Context, conf Config) error
+}
+
+var _ PortService = (*PortsService)(nil) // Compile-time assertion
+
+func NewPortsService(repo repository.PortRepository, jsonReader file.JSONReader, logger Logger) *PortsService {
 	return &PortsService{
 		repo:       repo,
 		jsonReader: jsonReader,
-		logger:     log.New(os.Stdout, "SERVICE: ", log.Ldate|log.Ltime|log.Lshortfile),
+		logger:     logger,
 	}
 }
 
 // collectPortBatches accumulates ports into batches of specified size
 // before sending them for processing. This helps optimize memory use and database operations
-func (s *PortsService) ReadAndStorePorts(ctx context.Context, config ports.Config) error {
+func (s *PortsService) ReadAndStorePorts(ctx context.Context, config Config) error {
 	s.logger.Println("starting readAndStore ports process")
 
 	filePath := config.FilePath
@@ -120,7 +135,7 @@ func (s *PortsService) ReadAndStorePorts(ctx context.Context, config ports.Confi
 
 func collectPortBatches(
 	ctx context.Context,
-	portsChan <-chan domain.Port,
+	portsChan <-chan file.Port,
 	batchChan chan<- []domain.Port,
 	batchSize int,
 	wg *sync.WaitGroup,
@@ -159,7 +174,7 @@ func collectPortBatches(
 				return
 			}
 
-			batch = append(batch, port)
+			batch = append(batch, convertFilePortToDomainPort(port))
 			if len(batch) >= batchSize {
 				newBatch := make([]domain.Port, len(batch))
 				copy(newBatch, batch)
@@ -182,11 +197,47 @@ func (s *PortsService) savePortBatches(ctx context.Context, batchChan <-chan []d
 			if !ok {
 				return
 			}
+			portsDB := make([]repository.PortDB, len(batch))
+			for i, port := range batch {
+				portsDB[i] = convertPortToPortDB(port)
+			}
 			s.logger.Printf("processing batch of %d ports", len(batch))
-			err := s.repo.UpsertPorts(ctx, batch)
+			err := s.repo.UpsertPorts(ctx, portsDB)
 			if err != nil {
 				errChan <- fmt.Errorf("failed to upsert ports: %w", err)
 			}
 		}
+	}
+}
+
+func convertPortToPortDB(port domain.Port) repository.PortDB {
+	return repository.PortDB{
+		Key:         port.Key,
+		Name:        port.Name,
+		City:        port.City,
+		Country:     port.Country,
+		Alias:       port.Alias,
+		Regions:     port.Regions,
+		Coordinates: port.Coordinates,
+		Province:    port.Province,
+		Timezone:    port.Timezone,
+		Unlocs:      port.Unlocs,
+		Code:        port.Code,
+	}
+}
+
+func convertFilePortToDomainPort(port file.Port) domain.Port {
+	return domain.Port{
+		Key:         port.Key,
+		Name:        port.Name,
+		City:        port.City,
+		Country:     port.Country,
+		Alias:       port.Alias,
+		Regions:     port.Regions,
+		Coordinates: port.Coordinates,
+		Province:    port.Province,
+		Timezone:    port.Timezone,
+		Unlocs:      port.Unlocs,
+		Code:        port.Code,
 	}
 }

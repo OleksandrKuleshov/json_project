@@ -4,10 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"home-task/internal/adapters/file"
-	"home-task/internal/adapters/repository"
-	"home-task/internal/core/domain"
-	"home-task/internal/core/ports"
 	"os"
 	"os/signal"
 	"runtime"
@@ -15,22 +11,25 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/OleksandrKuleshov/home-task/internal/adapters/file"
+	"github.com/OleksandrKuleshov/home-task/internal/adapters/repository"
 )
 
 type mockJSONReader struct {
-	streamPortsFn func(ctx context.Context, filePath string, portsChanSize int) (<-chan domain.Port, <-chan error)
+	streamPortsFn func(ctx context.Context, filePath string, portsChanSize int) (<-chan file.Port, <-chan error)
 }
 
-func (m *mockJSONReader) StreamPorts(ctx context.Context, filePath string, portsChanSize int) (<-chan domain.Port, <-chan error) {
+func (m *mockJSONReader) StreamPorts(ctx context.Context, filePath string, portsChanSize int) (<-chan file.Port, <-chan error) {
 	return m.streamPortsFn(ctx, filePath, portsChanSize)
 }
 
 type mockPortRepository struct {
-	upsertFn func(ctx context.Context, ports []domain.Port) error
+	upsertFn func(ctx context.Context, ports []repository.PortDB) error
 	closeFn  func(ctx context.Context) error
 }
 
-func (m *mockPortRepository) UpsertPorts(ctx context.Context, ports []domain.Port) error {
+func (m *mockPortRepository) UpsertPorts(ctx context.Context, ports []repository.PortDB) error {
 	return m.upsertFn(ctx, ports)
 }
 
@@ -38,9 +37,21 @@ func (m *mockPortRepository) Close(ctx context.Context) error {
 	return nil
 }
 
+type mockLogger struct {
+	logs []string
+}
+
+func (m *mockLogger) Println(v ...interface{}) {
+	m.logs = append(m.logs, fmt.Sprintln(v...))
+}
+
+func (m *mockLogger) Printf(format string, v ...interface{}) {
+	m.logs = append(m.logs, fmt.Sprintf(format, v...))
+}
+
 func TestPortService_ReadAndStorePorts(t *testing.T) {
 
-	testPorts := []domain.Port{
+	testPorts := []file.Port{
 		{Key: "PORT1", Name: "Test Port 1"},
 		{Key: "PORT2", Name: "Test Port 2"},
 	}
@@ -50,7 +61,7 @@ func TestPortService_ReadAndStorePorts(t *testing.T) {
 		filePath       string
 		batchSize      int
 		chanBufferSize int
-		setupMocks     func() (ports.JSONReader, ports.PortRepository)
+		setupMocks     func() (file.JSONReader, repository.PortRepository)
 		setupContext   func() context.Context
 		expectedError  error
 	}{
@@ -59,7 +70,7 @@ func TestPortService_ReadAndStorePorts(t *testing.T) {
 			filePath:       "",
 			batchSize:      2,
 			chanBufferSize: 5,
-			setupMocks: func() (ports.JSONReader, ports.PortRepository) {
+			setupMocks: func() (file.JSONReader, repository.PortRepository) {
 				return newMockJSONReader(testPorts, nil), newMockRepository()
 			},
 			setupContext: func() context.Context {
@@ -73,7 +84,7 @@ func TestPortService_ReadAndStorePorts(t *testing.T) {
 			filePath:       "test-file-path.json",
 			batchSize:      0,
 			chanBufferSize: 5,
-			setupMocks: func() (ports.JSONReader, ports.PortRepository) {
+			setupMocks: func() (file.JSONReader, repository.PortRepository) {
 				return newMockJSONReader(testPorts, nil), newMockRepository()
 			},
 			setupContext: func() context.Context {
@@ -87,7 +98,7 @@ func TestPortService_ReadAndStorePorts(t *testing.T) {
 			filePath:       "test-file-path.json",
 			batchSize:      5,
 			chanBufferSize: 0,
-			setupMocks: func() (ports.JSONReader, ports.PortRepository) {
+			setupMocks: func() (file.JSONReader, repository.PortRepository) {
 				return newMockJSONReader(testPorts, nil), newMockRepository()
 			},
 			setupContext: func() context.Context {
@@ -100,7 +111,7 @@ func TestPortService_ReadAndStorePorts(t *testing.T) {
 			filePath:       "test.json",
 			batchSize:      2,
 			chanBufferSize: 5,
-			setupMocks: func() (ports.JSONReader, ports.PortRepository) {
+			setupMocks: func() (file.JSONReader, repository.PortRepository) {
 				return newMockJSONReader(testPorts, nil), newMockRepository()
 			},
 			setupContext: func() context.Context {
@@ -113,7 +124,7 @@ func TestPortService_ReadAndStorePorts(t *testing.T) {
 			filePath:       "test.json",
 			batchSize:      2,
 			chanBufferSize: 5,
-			setupMocks: func() (ports.JSONReader, ports.PortRepository) {
+			setupMocks: func() (file.JSONReader, repository.PortRepository) {
 				return newMockJSONReader(nil, errors.New("read error")), newMockRepository()
 			},
 			expectedError: errors.New("error reading ports: read error"),
@@ -123,10 +134,11 @@ func TestPortService_ReadAndStorePorts(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			jsonReader, repo := tt.setupMocks()
-			service := NewPortsService(repo, jsonReader)
+			logger := &mockLogger{}
+			service := NewPortsService(repo, jsonReader, logger)
 
 			ctx := context.Background()
-			config := ports.Config{
+			config := Config{
 				FilePath:       tt.filePath,
 				BatchSize:      tt.batchSize,
 				ChanBufferSize: tt.chanBufferSize,
@@ -197,18 +209,19 @@ func TestPortService_MemoryConstraints(t *testing.T) {
 
 		runtime.GC()
 		runtime.ReadMemStats(&m1)
+		logger := &mockLogger{}
 
-		repo, err := repository.NewSQLiteRepoistory()
+		repo, err := repository.NewSQLiteRepoistory(logger)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer repo.Close(context.Background())
 
-		reader := file.NewJSONReader()
-		service := NewPortsService(repo, reader)
+		reader := file.NewJSONReader(logger)
+		service := NewPortsService(repo, reader, logger)
 
 		ctx := context.Background()
-		err = service.ReadAndStorePorts(ctx, ports.Config{
+		err = service.ReadAndStorePorts(ctx, Config{
 			FilePath:       tmpfile.Name(),
 			BatchSize:      100,
 			ChanBufferSize: 10,
@@ -296,24 +309,25 @@ func TestPortService_SignalHandling(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			logger := &mockLogger{}
 			ctx, cancel := context.WithCancel(context.Background())
 
 			sigChan := make(chan os.Signal, 1)
 			signal.Notify(sigChan, tt.singal)
 
-			repo, err := repository.NewSQLiteRepoistory()
+			repo, err := repository.NewSQLiteRepoistory(logger)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer repo.Close(context.Background())
 
-			reader := file.NewJSONReader()
-			service := NewPortsService(repo, reader)
+			reader := file.NewJSONReader(logger)
+			service := NewPortsService(repo, reader, logger)
 
 			errChan := make(chan error, 1)
 
 			go func() {
-				err := service.ReadAndStorePorts(ctx, ports.Config{
+				err := service.ReadAndStorePorts(ctx, Config{
 					FilePath:       tmpfile.Name(),
 					BatchSize:      100,
 					ChanBufferSize: 10,
@@ -357,10 +371,10 @@ func TestPortService_SignalHandling(t *testing.T) {
 	}
 }
 
-func newMockJSONReader(ports []domain.Port, err error) *mockJSONReader {
+func newMockJSONReader(ports []file.Port, err error) *mockJSONReader {
 	return &mockJSONReader{
-		streamPortsFn: func(ctx context.Context, filePath string, portsChanSize int) (<-chan domain.Port, <-chan error) {
-			portsChan := make(chan domain.Port, len(ports))
+		streamPortsFn: func(ctx context.Context, filePath string, portsChanSize int) (<-chan file.Port, <-chan error) {
+			portsChan := make(chan file.Port, len(ports))
 			errChan := make(chan error, 1)
 
 			go func() {
@@ -390,7 +404,7 @@ func newMockJSONReader(ports []domain.Port, err error) *mockJSONReader {
 func newMockRepository() *mockPortRepository {
 
 	repo := &mockPortRepository{
-		upsertFn: func(ctx context.Context, ports []domain.Port) error {
+		upsertFn: func(ctx context.Context, ports []repository.PortDB) error {
 			return nil
 		},
 		closeFn: func(ctx context.Context) error {
