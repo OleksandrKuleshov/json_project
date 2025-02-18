@@ -6,26 +6,33 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"home-task/internal/core/domain"
-	"home-task/internal/core/ports"
-	"log"
-	"os"
 	"strings"
 
 	"github.com/google/uuid"
+
 	_ "github.com/mattn/go-sqlite3"
 )
 
-type PortSQLiteRepository struct {
-	db     *sql.DB
-	logger *log.Logger
+type Logger interface {
+	Printf(format string, v ...interface{})
+	Println(v ...interface{})
 }
 
-var _ ports.PortRepository = (*PortSQLiteRepository)(nil)
+type PortSQLiteRepository struct {
+	db     *sql.DB
+	logger Logger
+}
+
+type PortRepository interface {
+	UpsertPorts(ctx context.Context, ports []PortDB) error
+	Close(ctx context.Context) error
+}
+
+var _ PortRepository = (*PortSQLiteRepository)(nil)
 
 var ErrFailedOpenDBConnection = errors.New("failed to open connection to database: ")
 
-func NewSQLiteRepoistory() (*PortSQLiteRepository, error) {
+func NewSQLiteRepoistory(logger Logger) (*PortSQLiteRepository, error) {
 	db, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
 		return nil, fmt.Errorf("%s, %w", ErrFailedOpenDBConnection, err)
@@ -38,7 +45,7 @@ func NewSQLiteRepoistory() (*PortSQLiteRepository, error) {
 
 	repo := &PortSQLiteRepository{
 		db:     db,
-		logger: log.New(os.Stdout, "REPOSITORY: ", log.Ldate|log.Ltime|log.Lshortfile),
+		logger: logger,
 	}
 
 	if err := repo.initialize(); err != nil {
@@ -56,84 +63,7 @@ func (r *PortSQLiteRepository) initialize() error {
 	return nil
 }
 
-// func (r *PortSQLiteRepository) GetPorts(ctx context.Context) {
-// 	query := `
-// 		SELECT * from ports;
-// 	`
-// 	rows, err := r.db.Query(query)
-// 	if err != nil {
-// 	}
-// 	defer rows.Close()
-
-// 	var ports []domain.PortDB
-// 	for rows.Next() {
-// 		var (
-// 			port        domain.PortDB
-// 			aliasJSON   sql.NullString
-// 			regionsJSON sql.NullString
-// 			coordsJSON  sql.NullString
-// 			unlocsJSON  sql.NullString
-// 		)
-
-// 		err := rows.Scan(
-// 			&port.ID,
-// 			&port.Key,
-// 			&port.Name,
-// 			&port.City,
-// 			&port.Country,
-// 			&aliasJSON,
-// 			&regionsJSON,
-// 			&coordsJSON,
-// 			&port.Province,
-// 			&port.Timezone,
-// 			&unlocsJSON,
-// 			&port.Code,
-// 		)
-// 		if err != nil {
-// 			// return nil, fmt.Errorf("failed to scan port: %w", err)
-// 		}
-
-// 		port.Alias = make([]string, 0)
-// 		port.Regions = make([]string, 0)
-// 		port.Coordinates = make([]float64, 0)
-// 		port.Unlocs = make([]string, 0)
-
-// 		// Only unmarshal if we have valid JSON
-// 		if aliasJSON.Valid && aliasJSON.String != "" {
-// 			if err := json.Unmarshal([]byte(aliasJSON.String), &port.Alias); err != nil {
-// 				fmt.Printf("Error unmarshaling alias: %v\n", err)
-// 			}
-// 		}
-// 		if regionsJSON.Valid && regionsJSON.String != "" {
-// 			if err := json.Unmarshal([]byte(regionsJSON.String), &port.Regions); err != nil {
-// 				fmt.Printf("Error unmarshaling regions: %v\n", err)
-// 			}
-// 		}
-// 		if coordsJSON.Valid && coordsJSON.String != "" {
-// 			if err := json.Unmarshal([]byte(coordsJSON.String), &port.Coordinates); err != nil {
-// 				fmt.Printf("Error unmarshaling coordinates: %v\n", err)
-// 			}
-// 		}
-// 		if unlocsJSON.Valid && unlocsJSON.String != "" {
-// 			if err := json.Unmarshal([]byte(unlocsJSON.String), &port.Unlocs); err != nil {
-// 				fmt.Printf("Error unmarshaling unlocs: %v\n", err)
-// 			}
-// 		}
-
-// 		ports = append(ports, port)
-// 	}
-
-// 	// Check for errors from iterating over rows
-// 	if err := rows.Err(); err != nil {
-// 		// return nil, fmt.Errorf("error iterating over ports: %w", err)
-// 	}
-// 	fmt.Println("ports from db")
-// 	for _, port := range ports {
-// 		fmt.Println(port)
-// 	}
-// }
-
-func (r *PortSQLiteRepository) UpsertPorts(ctx context.Context, ports []domain.Port) error {
+func (r *PortSQLiteRepository) UpsertPorts(ctx context.Context, ports []PortDB) error {
 	r.logger.Printf("starting batch upsert of %d ports", len(ports))
 
 	if err := ctx.Err(); err != nil {

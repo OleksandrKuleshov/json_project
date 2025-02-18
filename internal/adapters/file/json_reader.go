@@ -4,27 +4,33 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"home-task/internal/core/domain"
-	"home-task/internal/core/ports"
-	"log"
 	"os"
 )
 
-type FileJSONReader struct {
-	logger *log.Logger
+type Logger interface {
+	Printf(format string, v ...interface{})
+	Println(v ...interface{})
 }
 
-var _ ports.JSONReader = (*FileJSONReader)(nil) // Compile-time assertion
+type FileJSONReader struct {
+	logger Logger
+}
 
-func NewJSONReader() *FileJSONReader {
+type JSONReader interface {
+	StreamPorts(ctx context.Context, filePath string, portsChanSize int) (<-chan Port, <-chan error)
+}
+
+var _ JSONReader = (*FileJSONReader)(nil) // Compile-time assertion
+
+func NewJSONReader(logger Logger) *FileJSONReader {
 	return &FileJSONReader{
-		logger: log.New(os.Stdout, "JSON_READER: ", log.Ldate|log.Ltime|log.Lshortfile),
+		logger: logger,
 	}
 }
 
-func (f *FileJSONReader) StreamPorts(ctx context.Context, filePath string, portsChanSize int) (<-chan domain.Port, <-chan error) {
+func (f *FileJSONReader) StreamPorts(ctx context.Context, filePath string, portsChanSize int) (<-chan Port, <-chan error) {
 	f.logger.Println("starting streaming ports from file")
-	portsChan := make(chan domain.Port, 5)
+	portsChan := make(chan Port, 5)
 	errChan := make(chan error, 1)
 
 	file, err := os.Open(filePath)
@@ -50,7 +56,7 @@ func (f *FileJSONReader) StreamPorts(ctx context.Context, filePath string, ports
 
 // readPort processes the JSON file as a stream of tokens
 // This allows processing large files without loading them entirely into memory
-func readPort(ctx context.Context, file *os.File, portsChan chan<- domain.Port, errChan chan<- error) {
+func readPort(ctx context.Context, file *os.File, portsChan chan<- Port, errChan chan<- error) {
 	decoder := json.NewDecoder(file)
 
 	_, err := decoder.Token()
@@ -71,7 +77,7 @@ func readPort(ctx context.Context, file *os.File, portsChan chan<- domain.Port, 
 				return
 			}
 
-			var port domain.Port
+			var port Port
 			err = decoder.Decode(&port)
 			if err != nil {
 				errChan <- fmt.Errorf("failed to decode port: %w", err)

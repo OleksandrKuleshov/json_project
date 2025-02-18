@@ -1,4 +1,4 @@
-module home-task
+module github.com/OleksandrKuleshov/home-task
 
 go 1.23
 

@@ -3,10 +3,23 @@ package file
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 	"time"
 )
+
+type mockLogger struct {
+	logs []string
+}
+
+func (m *mockLogger) Println(v ...interface{}) {
+	m.logs = append(m.logs, fmt.Sprintln(v...))
+}
+
+func (m *mockLogger) Printf(format string, v ...interface{}) {
+	m.logs = append(m.logs, fmt.Sprintf(format, v...))
+}
 
 func TestFileJSONReader_StreamPorts(t *testing.T) {
 
@@ -70,7 +83,8 @@ func TestFileJSONReader_StreamPorts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reader := NewJSONReader()
+			logger := &mockLogger{}
+			reader := NewJSONReader(logger)
 			ctx, cancel := tt.setupContext()
 			defer cancel()
 
